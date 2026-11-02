@@ -1,18 +1,24 @@
 {
-  "name": "maincrafts-mern-task1",
+  "name": "maincrafts-mern-todo-task2",
   "version": "1.0.0",
-  "description": "Maincrafts Technology MERN Stack Internship - Task 1: Basic React App + API",
+  "description": "Maincrafts Technology MERN Stack Internship - Task 2: To-Do List Application with React, Express, and MongoDB Atlas",
   "scripts": {
-    "server": "npm run dev --prefix server",
-    "client": "npm run dev --prefix client",
-    "dev": "concurrently \"npm run server\" \"npm run client\"",
-    "start": "node server/server.js"
+    "install-all": "npm install && npm install --prefix backend && npm install --prefix frontend",
+    "backend": "node backend/server.js",
+    "frontend": "npm run dev --prefix frontend",
+    "dev": "concurrently \"npm run backend\" \"npm run frontend\"",
+    "start": "node backend/server.js",
+    "build": "npm run build --prefix frontend"
   },
   "keywords": [
     "mern",
     "react",
+    "vite",
+    "axios",
     "express",
     "mongodb",
+    "mongoose",
+    "todo-list",
     "maincrafts"
   ],
   "author": "Lokesh",

@@ -2,11 +2,18 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import { connectDB } from "./config/db.js";
 import Product from "./models/Product.js";
 import { initialProducts } from "./seedData.js";
 
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const TASKS_FILE = path.resolve(__dirname, "../backend/tasks.json");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -14,6 +21,39 @@ const PORT = process.env.PORT || 5000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Task Mongoose Model (Task 2 support)
+const taskSchema = new mongoose.Schema(
+  {
+    text: {
+      type: String,
+      required: [true, "Task text is required"],
+      trim: true,
+    },
+  },
+  { timestamps: true }
+);
+const Task = mongoose.models.Task || mongoose.model("Task", taskSchema);
+
+const readStoredTasks = () => {
+  try {
+    if (fs.existsSync(TASKS_FILE)) {
+      const parsed = JSON.parse(fs.readFileSync(TASKS_FILE, "utf-8"));
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+};
+
+const writeStoredTasks = (tasks) => {
+  try {
+    fs.writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2), "utf-8");
+  } catch {
+    // ignore
+  }
+};
 
 // In-memory fallback cache in case MongoDB is temporarily offline
 let fallbackProducts = initialProducts.map((p, idx) => ({
@@ -40,29 +80,74 @@ const init = async () => {
       console.error("Error during initial seeding:", err.message);
     }
   } else {
-    console.log("🚀 Server running in resilient mode with sample products cache.");
+    console.log("🚀 Server running in resilient mode.");
   }
 };
 init();
+
+// ==========================================
+// TASK 2 ENDPOINTS: GET /tasks & POST /add
+// ==========================================
+
+app.get("/tasks", async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const tasks = await Task.find().sort({ createdAt: -1 });
+      return res.status(200).json(tasks);
+    }
+    return res.status(200).json(readStoredTasks());
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch tasks", details: error.message });
+  }
+});
+
+app.post("/add", async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (text === undefined || text === null || typeof text !== "string" || !text.trim()) {
+      return res.status(400).json({ error: "Task text cannot be empty. Please enter a task description." });
+    }
+    const trimmedText = text.trim();
+    if (mongoose.connection.readyState === 1) {
+      const saved = await Task.create({ text: trimmedText });
+      return res.status(201).json(saved);
+    }
+    const now = new Date().toISOString();
+    const newTask = {
+      _id: new mongoose.Types.ObjectId().toString(),
+      text: trimmedText,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const updated = [newTask, ...readStoredTasks()];
+    writeStoredTasks(updated);
+    return res.status(201).json(newTask);
+  } catch (error) {
+    res.status(400).json({ error: "Failed to add task", details: error.message });
+  }
+});
+
+// ==========================================
+// TASK 1 ENDPOINTS: /api/products
+// ==========================================
 
 // API Health Check
 app.get("/api/health", (req, res) => {
   res.json({
     status: "ok",
-    message: "Maincrafts MERN Products API is active",
+    message: "Maincrafts MERN API is active",
     database: isMongoConnected ? "Connected (MongoDB)" : "Local Resilient Store",
     timestamp: new Date(),
   });
 });
 
-// 1. GET all products (Matches internship starter sample code)
+// 1. GET all products
 app.get("/api/products", async (req, res) => {
   try {
     if (mongoose.connection.readyState === 1) {
       const products = await Product.find().sort({ createdAt: -1 });
       return res.json(products);
     }
-    // Fallback if DB is not currently connected
     return res.json(fallbackProducts);
   } catch (error) {
     console.error("Error fetching products:", error);
@@ -87,7 +172,7 @@ app.get("/api/products/:id", async (req, res) => {
   }
 });
 
-// 3. POST new product (Create)
+// 3. POST new product
 app.post("/api/products", async (req, res) => {
   try {
     const { name, price, category, description, imageUrl, inStock, rating } = req.body;
@@ -101,9 +186,10 @@ app.post("/api/products", async (req, res) => {
       price: Number(price),
       category: category ? category.trim() : "General",
       description: description ? description.trim() : "",
-      imageUrl: imageUrl && imageUrl.trim() !== "" 
-        ? imageUrl.trim() 
-        : "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=500&auto=format&fit=crop&q=60",
+      imageUrl:
+        imageUrl && imageUrl.trim() !== ""
+          ? imageUrl.trim()
+          : "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=500&auto=format&fit=crop&q=60",
       inStock: inStock !== undefined ? Boolean(inStock) : true,
       rating: rating ? Number(rating) : 4.5,
     };
@@ -113,7 +199,6 @@ app.post("/api/products", async (req, res) => {
       return res.status(201).json(newProduct);
     }
 
-    // Fallback in-memory create
     const mockProduct = {
       ...productData,
       _id: `mock-id-${Date.now()}`,
@@ -136,7 +221,10 @@ app.put("/api/products/:id", async (req, res) => {
     if (updateData.price !== undefined) updateData.price = Number(updateData.price);
 
     if (mongoose.connection.readyState === 1 && mongoose.Types.ObjectId.isValid(id)) {
-      const updated = await Product.findByIdAndUpdate(id, updateData, { new: true, runValidators: true });
+      const updated = await Product.findByIdAndUpdate(id, updateData, {
+        new: true,
+        runValidators: true,
+      });
       if (!updated) return res.status(404).json({ error: "Product not found" });
       return res.json(updated);
     }
@@ -176,5 +264,5 @@ app.delete("/api/products/:id", async (req, res) => {
 // Start Server
 app.listen(PORT, () => {
   console.log(`🚀 Express Server is listening on http://localhost:${PORT}`);
-  console.log(`📦 Products API endpoint: http://localhost:${PORT}/api/products`);
+  console.log(`✅ Task 2 To-Do endpoints: GET /tasks, POST /add`);
 });
